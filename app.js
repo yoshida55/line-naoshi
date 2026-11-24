@@ -2,10 +2,10 @@
 // 鍵はこの端末の localStorage にだけ置く（外へは Gemini に送るときのヘッダーだけ）
 
 // 直して公開するたびに1つ上げる。画面の右上に出る
-const VERSION = 'ver.3（11月25日）';
+const VERSION = 'ver.4（11月25日）';
 
 const KEY_STORE = 'naoshi_api_key';
-const DRAFT_STORE = 'naoshi_draft';
+const DRAFT_STORE = 'naoshi_draft'; // ver.3 まで打ちかけの文を残していた所。今は起動のたびに消すだけ
 const MODEL_STORE = 'naoshi_model'; // 空なら gemini-flash-latest（いつも新しい flash を指す名前）
 
 // どの直し方でも守ってほしいこと
@@ -169,18 +169,42 @@ document.querySelector('.result_copy').addEventListener('click', async () => {
   }
 });
 
-document.querySelector('.writer_clear').addEventListener('click', () => {
+// 打った文・直した文を消して、まっさらにする
+function clearAll() {
   source.value = '';
   result.value = '';
-  localStorage.removeItem(DRAFT_STORE);
   modeButtons.forEach((b) => b.classList.remove('is_active'));
   lastMode = null;
   setStatus('');
+}
+
+document.querySelector('.writer_clear').addEventListener('click', () => {
+  clearAll();
   source.focus();
 });
 
-// 打ちかけの文を残す（ほかのアプリを見て戻っても消えない）
-source.addEventListener('input', () => localStorage.setItem(DRAFT_STORE, source.value));
+// 開き直したら、まっさらにする
+// スマホはアプリを閉じても裏で動き続けるので、「画面から外れていた時間」で見分ける
+// 1分より短いとき（ほかのアプリを少し見て戻った）は消さない
+const CLEAR_AFTER = 60 * 1000;
+let hiddenAt = 0;
+
+function clearIfReopened() {
+  if (hiddenAt && Date.now() - hiddenAt >= CLEAR_AFTER) clearAll();
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    hiddenAt = Date.now();
+  } else {
+    clearIfReopened();
+  }
+});
+
+// 「LINEで送る」でページを離れ、戻るボタンで戻ってきたとき
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) clearIfReopened();
+});
 
 // 設定：鍵を保存
 document.querySelector('.setting_save').addEventListener('click', () => {
@@ -205,12 +229,10 @@ document.querySelector('.setting_save').addEventListener('click', () => {
   const shared = [params.get('title'), params.get('text'), params.get('url')]
     .filter(Boolean)
     .filter((v, i, list) => !list.some((other, j) => j !== i && other.includes(v) && other !== v));
+  localStorage.removeItem(DRAFT_STORE); // 前の版で残した打ちかけの文は使わない
   if (shared.length) {
     source.value = [...new Set(shared)].join('\n');
-    localStorage.setItem(DRAFT_STORE, source.value);
     history.replaceState(null, '', location.pathname);
-  } else {
-    source.value = localStorage.getItem(DRAFT_STORE) || '';
   }
 
   if (localStorage.getItem(KEY_STORE)) {
