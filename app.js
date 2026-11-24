@@ -2,7 +2,7 @@
 // 鍵はこの端末の localStorage にだけ置く（外へは Gemini に送るときのヘッダーだけ）
 
 // 直して公開するたびに1つ上げる。画面の右上に出る
-const VERSION = 'ver.6（11月25日）';
+const VERSION = 'ver.9（11月25日）';
 
 const KEY_STORE = 'naoshi_api_key';
 const DRAFT_STORE = 'naoshi_draft'; // ver.3 まで打ちかけの文を残していた所。今は起動のたびに消すだけ
@@ -61,7 +61,7 @@ function unwrap(text) {
   return t;
 }
 
-async function askGemini(key, prompt, temperature) {
+async function askGemini(key, prompt, temperature, system = SYSTEM) {
   const model = localStorage.getItem(MODEL_STORE) || 'gemini-flash-latest';
   let res;
   try {
@@ -69,7 +69,7 @@ async function askGemini(key, prompt, temperature) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, // 鍵は URL に入れない
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM }] },
+        systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           temperature,
@@ -95,6 +95,7 @@ async function askGemini(key, prompt, temperature) {
 }
 
 async function rewrite(mode, again = false) {
+  if (tidying) await tidying; // 声の文に改行を入れている途中なら、入れ終わるのを待つ
   const text = source.value.trim();
   if (!text) {
     setStatus('先に「送りたい文」を打ってください', true);
@@ -171,6 +172,8 @@ document.querySelector('.result_copy').addEventListener('click', async () => {
 
 // 打った文・直した文を消して、まっさらにする
 function clearAll() {
+  if (voiceOn) stopVoice(); // 聞いたままだと、消した文が次の聞き取りで戻ってくる
+  tidyOnEnd = false;
   source.value = '';
   result.value = '';
   modeButtons.forEach((b) => b.classList.remove('is_active'));
@@ -189,10 +192,28 @@ document.querySelector('.writer_clear').addEventListener('click', () => {
 const CLEAR_AFTER = 60 * 1000;
 let hiddenAt = 0;
 
+// 入力欄にカーソルを当て、スマホのキーボードも出す（ver.9〜・ユーザー「起動した瞬間、入力ボックスが当たってる状況にできない？」）
+// スマホの Chrome は、指で触らずに focus() しただけでは、キーボードを出さない
+// navigator.virtualKeyboard.show() なら出せる。ただし、そのページを一度でも触ったあと（hasBeenActive）だけ
+// → アプリを裏から開き直したときは出る。完全に閉じてから開いたときは、まだ触っていないので出ない（ブラウザの決まり）
+function focusSource() {
+  const vk = navigator.virtualKeyboard;
+  if (!vk || !(navigator.userActivation && navigator.userActivation.hasBeenActive)) {
+    source.focus();
+    return;
+  }
+  source.setAttribute('virtualkeyboardpolicy', 'manual'); // show() は、この印があるときだけ効く
+  source.blur();
+  source.focus();
+  vk.show();
+  // 印を残すと、キーボードを閉じたあと指で触っても出なくなるので、すぐ外す
+  setTimeout(() => source.removeAttribute('virtualkeyboardpolicy'), 500);
+}
+
 function clearIfReopened() {
   if (hiddenAt && Date.now() - hiddenAt >= CLEAR_AFTER) {
     clearAll();
-    source.focus(); // すぐ打てるように
+    focusSource(); // すぐ打てるように（キーボードも出す）
     checkNewVersion();
   }
 }
@@ -222,57 +243,146 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// 声で入力（Chrome の音声認識）。押すと聞き始め、話し終わると自分で止まる。聞いている間にもう一度押すと止まる
+// 声で入力（Chrome の音声認識）。押すと聞き始め、もう一度押すまで聞き続ける（ver.7〜）
+// Chrome は少し黙ると聞くのをやめる。ver.6 までは、そこで止まり、考えて止まった所で文が切れた
+// だから押している間は、切れるたびにすぐ聞き直す
+// 止まるのは：もう一度押したとき・20秒何も聞き取れなかったとき（押し忘れ）・ほかのアプリに移ったとき・「消す」を押したとき
 const voiceButton = document.querySelector('.writer_voice');
 const VOICE_LABEL = '🎤 声で入力';
-let recognition = null;
+const VOICE_IDLE = 20 * 1000;
+let recognition = null; // いま動いている聞き取り（1回ぶん）
+let voiceOn = false; // 押して聞いている最中か
+let voiceHeard = false; // 押してから1文字でも聞き取れたか
+let lastHeardAt = 0; // 最後に聞き取れた時刻（押した時刻から数え始める）
+let voiceBefore = ''; // 押す前に入っていた文（改行を入れるのは、そのあとの声の所だけ）
+let tidyOnEnd = false; // 押して止めたとき、最後の文字が届いてから改行を入れる
+
+// 声で入れた文に、話の区切りで改行を入れる（ver.8〜・ユーザー「直し方のボタンを押さなくても」）
+// 声の文は、改行も句読点も無い1行で届く。話が終わるまで区切りは決められないので、止めたあとに1回だけ頼む
+const TIDY_SYSTEM = `あなたは、声で入力した文に改行を入れる係です。
+決まり：
+- 改行を入れるだけ。言葉・字・句読点は1文字も変えない・足さない・消さない
+- 改行は、1つの話が終わって次の話に移る所に入れる（LINE で読みやすい区切り）
+- 1つの話しかない短い文には、改行を入れない
+- 返すのは、改行を入れた文だけ`;
+const TIDY_MIN = 15; // これより短い声の文は頼まない（改行が要らず、待つだけになるため）
+let tidying = null; // 改行を入れている途中の頼みごと（直し方のボタンは、これを待ってから頼む）
+
+function tidyVoice(before, doneMessage = '') {
+  const key = localStorage.getItem(KEY_STORE);
+  const now = source.value;
+  if (!key || !now.startsWith(before)) return setStatus(doneMessage);
+  const head = now.slice(before.length).match(/^\s*/)[0]; // 押すたびにはさんだ改行は、そのまま残す
+  const part = now.slice(before.length + head.length);
+  if (part.replace(/\s/g, '').length < TIDY_MIN) return setStatus(doneMessage);
+  setStatus('✍ 話の区切りで改行しています…');
+  const job = (async () => {
+    let message = doneMessage;
+    try {
+      const tidied = (await askGemini(key, part, 0, TIDY_SYSTEM)).trim();
+      const plain = (s) => s.replace(/\s/g, '');
+      // 言葉まで変わっていたら使わない。待つ間に手で直していたら、上書きしない
+      if (plain(tidied) === plain(part) && source.value === now) source.value = before + head + tidied;
+    } catch (e) {
+      message = '改行は入れられませんでした：' + e.message;
+    }
+    if (tidying === job) tidying = null;
+    if (status.textContent.startsWith('✍')) setStatus(message);
+  })();
+  tidying = job;
+}
+
+// 聞き取りを1回ぶん始める。Chrome が切ったら onend で、もう一度ここを呼ぶ
+function listen() {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new Recognition();
+  rec.lang = 'ja-JP';
+  rec.interimResults = true; // 話している途中の文も、その場で出す
+  const base = source.value; // それまでの文のあとに足す
+  // 🎤 を押すたびに、新しい行から始める（ver.9〜・ユーザー「声で入力のたびに改行されない」）
+  // まだ何も聞き取れていない聞き取りだけ、前の文が改行で終わっていなければ、改行を1つはさむ
+  const lead = base === voiceBefore && base && !base.endsWith('\n') ? '\n' : '';
+
+  rec.onresult = (e) => {
+    if (rec !== recognition) return; // 捨てた聞き取りの、遅れて届いた結果
+    voiceHeard = true;
+    lastHeardAt = Date.now();
+    source.value = base + lead + Array.from(e.results).map((r) => r[0].transcript).join('');
+  };
+  rec.onerror = (e) => {
+    // aborted＝自分で止めた／no-speech＝黙っていた（onend で聞き直す）
+    if (rec !== recognition || e.error === 'aborted' || e.error === 'no-speech') return;
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') stopVoice('マイクが使えません。Chrome の設定で、このページのマイクを許可してください', true);
+    else if (e.error === 'network') stopVoice('ネットにつながりません。電波を確かめてください', true);
+    else if (e.error === 'audio-capture') stopVoice('マイクが見つかりません。ほかのアプリがマイクを使っていないか確かめてください', true);
+    else stopVoice(`声の入力が止まりました（${e.error}）`, true);
+  };
+  rec.onend = () => {
+    if (rec !== recognition) return;
+    recognition = null;
+    if (!voiceOn) {
+      if (tidyOnEnd) {
+        tidyOnEnd = false;
+        tidyVoice(voiceBefore);
+      }
+      return;
+    }
+    if (Date.now() - lastHeardAt >= VOICE_IDLE) {
+      if (voiceHeard) {
+        stopVoice();
+        tidyVoice(voiceBefore, '20秒話さなかったので、声の入力を止めました');
+      } else stopVoice('声が聞き取れませんでした。もう一度押してください', true);
+      return;
+    }
+    try {
+      listen(); // 聞き直す
+    } catch (err) {
+      stopVoice('声の入力が止まりました：' + err.message, true);
+    }
+  };
+
+  recognition = rec;
+  rec.start();
+}
+
+// 聞くのをやめて、ボタンを元に戻す。話している途中の文は、stop() で最後まで文字にしてから止まる
+function stopVoice(message = '', isError = false) {
+  voiceOn = false;
+  if (recognition) recognition.stop();
+  voiceButton.classList.remove('is_active');
+  voiceButton.textContent = VOICE_LABEL;
+  setStatus(message, isError);
+}
 
 voiceButton.addEventListener('click', () => {
-  if (recognition) {
-    recognition.stop();
+  if (voiceOn) {
+    const running = !!recognition;
+    stopVoice();
+    if (running) tidyOnEnd = voiceHeard; // 最後の文字が届く onend のあとで改行を入れる
+    else if (voiceHeard) tidyVoice(voiceBefore);
     return;
   }
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new Recognition();
-  recognition.lang = 'ja-JP';
-  recognition.interimResults = true; // 話している途中の文も、その場で出す
-
-  const base = source.value; // 前に打ってあった文のあとに足す
-  let heard = false; // 1文字でも聞き取れたか
-  let failed = false; // 止まった理由を、もう画面に出したか
-  // 何も起きないように見えないよう、聞き始め・止まった理由を、いつも画面に出す（ver.6〜）
-  recognition.onstart = () => setStatus('🎤 聞いています。話してください');
-  recognition.onresult = (e) => {
-    heard = true;
-    source.value = base + Array.from(e.results).map((r) => r[0].transcript).join('');
-  };
-  recognition.onerror = (e) => {
-    if (e.error === 'aborted') return; // 自分で止めたとき
-    failed = true;
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') setStatus('マイクが使えません。Chrome の設定で、このページのマイクを許可してください', true);
-    else if (e.error === 'no-speech') setStatus('声が聞こえませんでした。もう一度押してください', true);
-    else if (e.error === 'network') setStatus('ネットにつながりません。電波を確かめてください', true);
-    else if (e.error === 'audio-capture') setStatus('マイクが見つかりません。ほかのアプリがマイクを使っていないか確かめてください', true);
-    else setStatus(`声の入力が止まりました（${e.error}）`, true);
-  };
-  recognition.onend = () => {
-    recognition = null;
-    voiceButton.classList.remove('is_active');
-    voiceButton.textContent = VOICE_LABEL;
-    if (heard) setStatus('');
-    else if (!failed) setStatus('声が聞き取れませんでした。もう一度押してください', true);
-  };
-
-  try {
-    recognition.start();
-  } catch (err) {
-    recognition = null;
-    setStatus('声の入力を始められませんでした：' + err.message, true);
-    return;
-  }
-  setStatus('🎤 準備しています…');
+  if (recognition) recognition.abort(); // 前の聞き取りが、まだ止まりきっていなければ捨てる
+  recognition = null;
+  voiceOn = true;
+  voiceHeard = false;
+  tidyOnEnd = false;
+  voiceBefore = source.value;
+  lastHeardAt = Date.now();
   voiceButton.classList.add('is_active');
   voiceButton.textContent = '聞いています…（押すと止まる）';
+  // 何も起きないように見えないよう、聞いていることと止まった理由を、いつも画面に出す（ver.6〜）
+  setStatus('🎤 聞いています。話し終わったら、もう一度押してください');
+  try {
+    listen();
+  } catch (err) {
+    stopVoice('声の入力を始められませんでした：' + err.message, true);
+  }
+});
+
+// ほかのアプリに移ったら止める（マイクを動かしっぱなしにしない）
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && voiceOn) stopVoice();
 });
 
 // 「LINEで送る」でページを離れ、戻るボタンで戻ってきたとき
@@ -309,7 +419,7 @@ document.querySelector('.setting_save').addEventListener('click', () => {
     history.replaceState(null, '', location.pathname);
   } else {
     // すぐ打てるように、入力欄にカーソルを当てる（共有で文が来たときは、直し方のボタンが隠れないよう当てない）
-    source.focus();
+    focusSource();
   }
 
   // 声で入力：この端末の Chrome が音声認識を使えるときだけ出す
