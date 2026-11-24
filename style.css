@@ -1,0 +1,181 @@
+/* ┌─────────────────────────────────────────┐
+   │ 共通                                    │
+   └─────────────────────────────────────────┘ */
+:root {
+  --ink: #22312c;
+  --accent: #2e5e4e;
+  --paper: #f4f1ea;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  max-width: 36rem; /* PC で開いても、スマホの幅で見せる */
+  margin: 0 auto;
+  padding: 1.25rem 1rem 3rem;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: system-ui, "Hiragino Sans", "Yu Gothic UI", sans-serif;
+  font-size: 1.125rem;
+  line-height: 1.7;
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  min-height: 3.25rem; /* 指で押しやすい高さ */
+  border: 2px solid var(--accent);
+  border-radius: 0.5rem;
+  background: #fff;
+  cursor: pointer;
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 2px solid color-mix(in srgb, var(--ink) 25%, transparent);
+  border-radius: 0.5rem;
+  background: #fff;
+  font-size: 1.25rem;
+  resize: vertical;
+}
+
+/* ┌─────────────────────────────────────────┐
+   │ 打つ所                                  │
+   └─────────────────────────────────────────┘ */
+/* 見出しと「消す」を左右に並べる */
+.writer_inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.writer_title {
+  font-weight: 700;
+}
+
+.writer_clear {
+  min-height: 2.5rem;
+  padding: 0 1rem;
+  border-color: color-mix(in srgb, var(--ink) 30%, transparent);
+  font-size: 1rem;
+}
+
+/* ┌─────────────────────────────────────────┐
+   │ 直し方のボタン                          │
+   └─────────────────────────────────────────┘ */
+.mode {
+  margin-top: 1.5rem;
+}
+
+.mode_title {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+}
+
+/* ボタンを2列に並べる（5個目は左に1つ） */
+.mode_list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.625rem;
+}
+
+.mode_item {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+/* いま頼んでいる・最後に使った直し方 */
+.mode_item.is_active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ┌─────────────────────────────────────────┐
+   │ 直した文                                │
+   └─────────────────────────────────────────┘ */
+.result {
+  margin-top: 1.75rem;
+}
+
+.result_title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.result_status {
+  min-height: 1.7em; /* 文が出ても下の欄がずれない */
+  margin: 0 0 0.25rem;
+  color: var(--accent);
+  font-size: 1rem;
+}
+
+.result_status.is_error {
+  color: #b3261e;
+}
+
+/* 送る・コピー・もう一回 を横に並べる */
+.result_inner {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 0.625rem;
+  margin-top: 0.75rem;
+}
+
+.result_send {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+/* ┌─────────────────────────────────────────┐
+   │ 設定                                    │
+   └─────────────────────────────────────────┘ */
+.setting {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  font-size: 1rem;
+}
+
+.setting_title {
+  cursor: pointer;
+}
+
+.setting_label {
+  display: block;
+  margin-top: 0.75rem;
+}
+
+.setting_input {
+  width: 100%;
+  padding: 0.625rem;
+  border: 2px solid color-mix(in srgb, var(--ink) 25%, transparent);
+  border-radius: 0.5rem;
+}
+
+.setting_save {
+  width: 100%;
+  margin-top: 0.625rem;
+}
+
+.setting_description {
+  color: color-mix(in srgb, var(--ink) 70%, transparent);
+  font-size: 0.9375rem;
+}
