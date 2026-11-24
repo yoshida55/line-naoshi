@@ -2,7 +2,7 @@
 // 鍵はこの端末の localStorage にだけ置く（外へは Gemini に送るときのヘッダーだけ）
 
 // 直して公開するたびに1つ上げる。画面の右上に出る
-const VERSION = 'ver.4（11月25日）';
+const VERSION = 'ver.5（11月25日）';
 
 const KEY_STORE = 'naoshi_api_key';
 const DRAFT_STORE = 'naoshi_draft'; // ver.3 まで打ちかけの文を残していた所。今は起動のたびに消すだけ
@@ -190,7 +190,10 @@ const CLEAR_AFTER = 60 * 1000;
 let hiddenAt = 0;
 
 function clearIfReopened() {
-  if (hiddenAt && Date.now() - hiddenAt >= CLEAR_AFTER) clearAll();
+  if (hiddenAt && Date.now() - hiddenAt >= CLEAR_AFTER) {
+    clearAll();
+    source.focus(); // すぐ打てるように
+  }
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -199,6 +202,42 @@ document.addEventListener('visibilitychange', () => {
   } else {
     clearIfReopened();
   }
+});
+
+// 声で入力（Chrome の音声認識）。押すと聞き始め、話し終わると自分で止まる。聞いている間にもう一度押すと止まる
+const voiceButton = document.querySelector('.writer_voice');
+const VOICE_LABEL = '🎤 声で入力';
+let recognition = null;
+
+voiceButton.addEventListener('click', () => {
+  if (recognition) {
+    recognition.stop();
+    return;
+  }
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new Recognition();
+  recognition.lang = 'ja-JP';
+  recognition.interimResults = true; // 話している途中の文も、その場で出す
+
+  const base = source.value; // 前に打ってあった文のあとに足す
+  recognition.onresult = (e) => {
+    source.value = base + Array.from(e.results).map((r) => r[0].transcript).join('');
+  };
+  recognition.onerror = (e) => {
+    if (e.error === 'not-allowed') setStatus('マイクが使えません。Chrome の設定で、このページのマイクを許可してください', true);
+    else if (e.error === 'no-speech') setStatus('声が聞こえませんでした。もう一度押してください', true);
+    else if (e.error === 'network') setStatus('ネットにつながりません。電波を確かめてください', true);
+  };
+  recognition.onend = () => {
+    recognition = null;
+    voiceButton.classList.remove('is_active');
+    voiceButton.textContent = VOICE_LABEL;
+  };
+
+  setStatus('');
+  recognition.start();
+  voiceButton.classList.add('is_active');
+  voiceButton.textContent = '聞いています…（押すと止まる）';
 });
 
 // 「LINEで送る」でページを離れ、戻るボタンで戻ってきたとき
@@ -233,7 +272,13 @@ document.querySelector('.setting_save').addEventListener('click', () => {
   if (shared.length) {
     source.value = [...new Set(shared)].join('\n');
     history.replaceState(null, '', location.pathname);
+  } else {
+    // すぐ打てるように、入力欄にカーソルを当てる（共有で文が来たときは、直し方のボタンが隠れないよう当てない）
+    source.focus();
   }
+
+  // 声で入力：この端末の Chrome が音声認識を使えるときだけ出す
+  voiceButton.hidden = !(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   if (localStorage.getItem(KEY_STORE)) {
     keyInput.placeholder = '保存済み（変えるときだけ入れる）';
