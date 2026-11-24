@@ -53,11 +53,13 @@
 
   <!-- 設定（Gemini の鍵）。鍵が無いときは開いた状態で出す -->
   <details class="setting">
-    <summary class="setting_title">設定（Gemini の鍵）</summary>
+    <summary class="setting_title">設定（Gemini の鍵・声）</summary>
     <label class="setting_label" for="api_key">Gemini API キー</label>
     <input id="api_key" class="setting_input" type="password" autocomplete="off" placeholder="AIza…">
     <button class="setting_save" type="button">保存</button>
     <p class="setting_description">鍵はこのスマホの中にだけ保存します。無料の鍵だと、送った文が Google のサービス改善に使われることがあります。</p>
+    <!-- 声の入力が使える端末だけ出す（app.js） -->
+    <label class="setting_check" hidden><input id="auto_voice" class="setting_checkbox" type="checkbox">開いたらすぐ声で聞く（打つときは、入力欄を触ると止まる）</label>
   </details>
 
   <script src="app.js"></script>

@@ -2,11 +2,12 @@
 // 鍵はこの端末の localStorage にだけ置く（外へは Gemini に送るときのヘッダーだけ）
 
 // 直して公開するたびに1つ上げる。画面の右上に出る
-const VERSION = 'ver.9（11月25日）';
+const VERSION = 'ver.10（11月25日）';
 
 const KEY_STORE = 'naoshi_api_key';
 const DRAFT_STORE = 'naoshi_draft'; // ver.3 まで打ちかけの文を残していた所。今は起動のたびに消すだけ
 const MODEL_STORE = 'naoshi_model'; // 空なら gemini-flash-latest（いつも新しい flash を指す名前）
+const AUTO_VOICE_STORE = 'naoshi_auto_voice'; // '1' なら、開いたらすぐ声で聞く（ver.10〜）
 
 // どの直し方でも守ってほしいこと
 // 直しすぎない（2026-11-25「加工しすぎ」「変えすぎは、おれじゃないみたい」）。書いた人の文のまま、要る所だけ変える
@@ -210,10 +211,18 @@ function focusSource() {
   setTimeout(() => source.removeAttribute('virtualkeyboardpolicy'), 500);
 }
 
+// 開いたとき・開き直したときの用意（ver.10〜・ユーザー「ロックを解除して開いて、🎤 を押している。それより早くしたい」）
+// 設定の「開いたらすぐ声で聞く」がオンなら聞き始める。オフならキーボードを出す
+// オンのときにキーボードを出さないのは、話すだけなら要らず、直し方のボタンも隠れるため
+function getReady() {
+  if (localStorage.getItem(AUTO_VOICE_STORE) === '1' && !voiceButton.hidden) startVoice(true);
+  else focusSource();
+}
+
 function clearIfReopened() {
   if (hiddenAt && Date.now() - hiddenAt >= CLEAR_AFTER) {
     clearAll();
-    focusSource(); // すぐ打てるように（キーボードも出す）
+    getReady(); // すぐ打てる・話せるように
     checkNewVersion();
   }
 }
@@ -252,6 +261,7 @@ const VOICE_LABEL = '🎤 声で入力';
 const VOICE_IDLE = 20 * 1000;
 let recognition = null; // いま動いている聞き取り（1回ぶん）
 let voiceOn = false; // 押して聞いている最中か
+let voiceAuto = false; // ボタンを押さず、開いたときに自分で聞き始めたか（入力欄を触ったら止める）
 let voiceHeard = false; // 押してから1文字でも聞き取れたか
 let lastHeardAt = 0; // 最後に聞き取れた時刻（押した時刻から数え始める）
 let voiceBefore = ''; // 押す前に入っていた文（改行を入れるのは、そのあとの声の所だけ）
@@ -312,7 +322,10 @@ function listen() {
   rec.onerror = (e) => {
     // aborted＝自分で止めた／no-speech＝黙っていた（onend で聞き直す）
     if (rec !== recognition || e.error === 'aborted' || e.error === 'no-speech') return;
-    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') stopVoice('マイクが使えません。Chrome の設定で、このページのマイクを許可してください', true);
+    const denied = e.error === 'not-allowed' || e.error === 'service-not-allowed';
+    // 開いてすぐ自分で聞き始めたときは、画面を触る前なので、マイクを止められることがある。押せば聞けるので赤くしない
+    if (denied && voiceAuto && !voiceHeard) stopVoice('🎤 を押すと聞き始めます（開いてすぐは、マイクが使えないことがあります）');
+    else if (e.error === 'not-allowed' || e.error === 'service-not-allowed') stopVoice('マイクが使えません。Chrome の設定で、このページのマイクを許可してください', true);
     else if (e.error === 'network') stopVoice('ネットにつながりません。電波を確かめてください', true);
     else if (e.error === 'audio-capture') stopVoice('マイクが見つかりません。ほかのアプリがマイクを使っていないか確かめてください', true);
     else stopVoice(`声の入力が止まりました（${e.error}）`, true);
@@ -331,7 +344,8 @@ function listen() {
       if (voiceHeard) {
         stopVoice();
         tidyVoice(voiceBefore, '20秒話さなかったので、声の入力を止めました');
-      } else stopVoice('声が聞き取れませんでした。もう一度押してください', true);
+      } else if (voiceAuto) stopVoice('20秒話さなかったので、聞くのを止めました。🎤 で、また聞き始めます');
+      else stopVoice('声が聞き取れませんでした。もう一度押してください', true);
       return;
     }
     try {
@@ -354,17 +368,12 @@ function stopVoice(message = '', isError = false) {
   setStatus(message, isError);
 }
 
-voiceButton.addEventListener('click', () => {
-  if (voiceOn) {
-    const running = !!recognition;
-    stopVoice();
-    if (running) tidyOnEnd = voiceHeard; // 最後の文字が届く onend のあとで改行を入れる
-    else if (voiceHeard) tidyVoice(voiceBefore);
-    return;
-  }
+// 聞き始める。auto＝ボタンを押さず、開いたときに自分で始めた
+function startVoice(auto = false) {
   if (recognition) recognition.abort(); // 前の聞き取りが、まだ止まりきっていなければ捨てる
   recognition = null;
   voiceOn = true;
+  voiceAuto = auto;
   voiceHeard = false;
   tidyOnEnd = false;
   voiceBefore = source.value;
@@ -372,12 +381,30 @@ voiceButton.addEventListener('click', () => {
   voiceButton.classList.add('is_active');
   voiceButton.textContent = '聞いています…（押すと止まる）';
   // 何も起きないように見えないよう、聞いていることと止まった理由を、いつも画面に出す（ver.6〜）
-  setStatus('🎤 聞いています。話し終わったら、もう一度押してください');
+  setStatus(auto ? '🎤 聞いています。打つときは、入力欄を触ってください' : '🎤 聞いています。話し終わったら、もう一度押してください');
   try {
     listen();
   } catch (err) {
     stopVoice('声の入力を始められませんでした：' + err.message, true);
   }
+}
+
+// 押して（または入力欄を触って）止める。最後の文字が届く onend のあとで、話の区切りの改行を入れる
+function finishVoice() {
+  const running = !!recognition;
+  stopVoice();
+  if (running) tidyOnEnd = voiceHeard;
+  else if (voiceHeard) tidyVoice(voiceBefore);
+}
+
+voiceButton.addEventListener('click', () => {
+  if (voiceOn) finishVoice();
+  else startVoice();
+});
+
+// 開いたときに自分で聞き始めたときは、入力欄を触ったら止める（打ちたい日は、そのまま打てるように）
+source.addEventListener('pointerdown', () => {
+  if (voiceOn && voiceAuto) finishVoice();
 });
 
 // ほかのアプリに移ったら止める（マイクを動かしっぱなしにしない）
@@ -404,6 +431,14 @@ document.querySelector('.setting_save').addEventListener('click', () => {
   setStatus('鍵を保存しました');
 });
 
+// 設定：開いたらすぐ声で聞く（ver.10〜）。押したらすぐ残す
+const autoVoiceInput = document.querySelector('#auto_voice');
+autoVoiceInput.addEventListener('change', () => {
+  if (autoVoiceInput.checked) localStorage.setItem(AUTO_VOICE_STORE, '1');
+  else localStorage.removeItem(AUTO_VOICE_STORE);
+  setStatus(autoVoiceInput.checked ? '次に開いたときから、すぐ聞き始めます' : '開いても、聞き始めないようにしました');
+});
+
 // 起動したとき
 (function start() {
   document.querySelector('.header_version').textContent = VERSION;
@@ -414,16 +449,19 @@ document.querySelector('.setting_save').addEventListener('click', () => {
     .filter(Boolean)
     .filter((v, i, list) => !list.some((other, j) => j !== i && other.includes(v) && other !== v));
   localStorage.removeItem(DRAFT_STORE); // 前の版で残した打ちかけの文は使わない
+
+  // 声で入力：この端末の Chrome が音声認識を使えるときだけ出す（下の getReady より先に決める）
+  voiceButton.hidden = !(window.SpeechRecognition || window.webkitSpeechRecognition);
+  document.querySelector('.setting_check').hidden = voiceButton.hidden;
+  autoVoiceInput.checked = localStorage.getItem(AUTO_VOICE_STORE) === '1';
+
   if (shared.length) {
     source.value = [...new Set(shared)].join('\n');
     history.replaceState(null, '', location.pathname);
   } else {
-    // すぐ打てるように、入力欄にカーソルを当てる（共有で文が来たときは、直し方のボタンが隠れないよう当てない）
-    focusSource();
+    // すぐ打てる・話せるようにする（共有で文が来たときは、直し方のボタンが隠れないよう何もしない）
+    getReady();
   }
-
-  // 声で入力：この端末の Chrome が音声認識を使えるときだけ出す
-  voiceButton.hidden = !(window.SpeechRecognition || window.webkitSpeechRecognition);
 
   if (localStorage.getItem(KEY_STORE)) {
     keyInput.placeholder = '保存済み（変えるときだけ入れる）';
