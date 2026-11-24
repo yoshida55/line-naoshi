@@ -2,7 +2,7 @@
 // 鍵はこの端末の localStorage にだけ置く（外へは Gemini に送るときのヘッダーだけ）
 
 // 直して公開するたびに1つ上げる。画面の右上に出る
-const VERSION = 'ver.5（11月25日）';
+const VERSION = 'ver.6（11月25日）';
 
 const KEY_STORE = 'naoshi_api_key';
 const DRAFT_STORE = 'naoshi_draft'; // ver.3 まで打ちかけの文を残していた所。今は起動のたびに消すだけ
@@ -193,7 +193,25 @@ function clearIfReopened() {
   if (hiddenAt && Date.now() - hiddenAt >= CLEAR_AFTER) {
     clearAll();
     source.focus(); // すぐ打てるように
+    checkNewVersion();
   }
+}
+
+// 開き直したとき、新しい版が公開されていたら読み込み直す（ver.6〜）
+// 裏で動き続けているページは読み込み直されないので、送っても前の版のままになる。だから自分で確かめる
+// 1.5秒待つのは、「共有」で文が届いて画面が切り替わる途中に、読み込み直しで邪魔しないため
+function checkNewVersion() {
+  setTimeout(async () => {
+    try {
+      const code = await (await fetch('app.js', { cache: 'no-cache' })).text();
+      const latest = (code.match(/const VERSION = '([^']*)'/) || [])[1];
+      if (!latest || latest === VERSION) return;
+      if (source.value) setStatus('新しい版があります。次に開いたときに入れ替わります');
+      else location.reload();
+    } catch (_) {
+      // 電波が無いときは、今の版のまま使う
+    }
+  }, 1500);
 }
 
 document.addEventListener('visibilitychange', () => {
@@ -220,22 +238,39 @@ voiceButton.addEventListener('click', () => {
   recognition.interimResults = true; // 話している途中の文も、その場で出す
 
   const base = source.value; // 前に打ってあった文のあとに足す
+  let heard = false; // 1文字でも聞き取れたか
+  let failed = false; // 止まった理由を、もう画面に出したか
+  // 何も起きないように見えないよう、聞き始め・止まった理由を、いつも画面に出す（ver.6〜）
+  recognition.onstart = () => setStatus('🎤 聞いています。話してください');
   recognition.onresult = (e) => {
+    heard = true;
     source.value = base + Array.from(e.results).map((r) => r[0].transcript).join('');
   };
   recognition.onerror = (e) => {
-    if (e.error === 'not-allowed') setStatus('マイクが使えません。Chrome の設定で、このページのマイクを許可してください', true);
+    if (e.error === 'aborted') return; // 自分で止めたとき
+    failed = true;
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') setStatus('マイクが使えません。Chrome の設定で、このページのマイクを許可してください', true);
     else if (e.error === 'no-speech') setStatus('声が聞こえませんでした。もう一度押してください', true);
     else if (e.error === 'network') setStatus('ネットにつながりません。電波を確かめてください', true);
+    else if (e.error === 'audio-capture') setStatus('マイクが見つかりません。ほかのアプリがマイクを使っていないか確かめてください', true);
+    else setStatus(`声の入力が止まりました（${e.error}）`, true);
   };
   recognition.onend = () => {
     recognition = null;
     voiceButton.classList.remove('is_active');
     voiceButton.textContent = VOICE_LABEL;
+    if (heard) setStatus('');
+    else if (!failed) setStatus('声が聞き取れませんでした。もう一度押してください', true);
   };
 
-  setStatus('');
-  recognition.start();
+  try {
+    recognition.start();
+  } catch (err) {
+    recognition = null;
+    setStatus('声の入力を始められませんでした：' + err.message, true);
+    return;
+  }
+  setStatus('🎤 準備しています…');
   voiceButton.classList.add('is_active');
   voiceButton.textContent = '聞いています…（押すと止まる）';
 });
