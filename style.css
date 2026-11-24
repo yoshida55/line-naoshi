@@ -168,10 +168,10 @@ textarea {
   color: #b3261e;
 }
 
-/* 送る・コピー・もう一回 を横に並べる */
+/* 上の段に LINEで送る・共有で送る、下の段に コピー・もう一回（共有が無い端末は 3つが2段に並ぶ） */
 .result_inner {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 0.625rem;
   margin-top: 0.75rem;
 }
@@ -179,6 +179,10 @@ textarea {
 .result_send {
   background: var(--accent);
   color: #fff;
+  font-weight: 700;
+}
+
+.result_share {
   font-weight: 700;
 }
 

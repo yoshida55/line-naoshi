@@ -46,6 +46,8 @@
     <textarea id="result_text" class="result_output" autocomplete="off" rows="5" placeholder="ボタンを押すと、ここに出ます"></textarea>
     <div class="result_inner">
       <button class="result_send" type="button">LINEで送る</button>
+      <!-- 共有の画面が使える端末だけ出す（app.js） -->
+      <button class="result_share" type="button" hidden>共有で送る</button>
       <button class="result_copy" type="button">コピー</button>
       <button class="result_retry" type="button">もう一回</button>
     </div>

@@ -2,7 +2,7 @@
 // 鍵はこの端末の localStorage にだけ置く（外へは Gemini に送るときのヘッダーだけ）
 
 // 直して公開するたびに1つ上げる。画面の右上に出る
-const VERSION = 'ver.10（11月25日）';
+const VERSION = 'ver.11（11月25日）';
 
 const KEY_STORE = 'naoshi_api_key';
 const DRAFT_STORE = 'naoshi_draft'; // ver.3 まで打ちかけの文を残していた所。今は起動のたびに消すだけ
@@ -155,6 +155,23 @@ document.querySelector('.result_send').addEventListener('click', () => {
     return;
   }
   location.href = 'https://line.me/R/share?text=' + encodeURIComponent(text);
+});
+
+// Android の共有画面を開く（ver.11〜・ユーザー「送り先はだいたい決まっている。アイコンを押せば送れない？」）
+// 共有画面の上の段には、よく送る相手のアイコンが並ぶ（どの相手を出すかは Android が決める）
+// 押すと、その人あての LINE が開く。最後の「送信」は LINE で押す（LINE は、ほかのアプリが個人あてに送ることを許していない）
+const shareButton = document.querySelector('.result_share');
+shareButton.addEventListener('click', async () => {
+  const text = textToSend();
+  if (!text) {
+    setStatus('送る文がありません', true);
+    return;
+  }
+  try {
+    await navigator.share({ text });
+  } catch (e) {
+    if (e.name !== 'AbortError') setStatus('共有の画面を開けませんでした：' + e.message, true); // AbortError＝自分で閉じた
+  }
 });
 
 document.querySelector('.result_copy').addEventListener('click', async () => {
@@ -454,6 +471,7 @@ autoVoiceInput.addEventListener('change', () => {
   voiceButton.hidden = !(window.SpeechRecognition || window.webkitSpeechRecognition);
   document.querySelector('.setting_check').hidden = voiceButton.hidden;
   autoVoiceInput.checked = localStorage.getItem(AUTO_VOICE_STORE) === '1';
+  shareButton.hidden = !navigator.share; // 共有の画面が使えない端末では出さない
 
   if (shared.length) {
     source.value = [...new Set(shared)].join('\n');
