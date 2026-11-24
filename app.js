@@ -1,6 +1,9 @@
 // 文章なおし：打った文を Gemini に直してもらい、LINE へ渡す
 // 鍵はこの端末の localStorage にだけ置く（外へは Gemini に送るときのヘッダーだけ）
 
+// 直して公開するたびに1つ上げる。画面の右上に出る
+const VERSION = 'ver.3（11月25日）';
+
 const KEY_STORE = 'naoshi_api_key';
 const DRAFT_STORE = 'naoshi_draft';
 const MODEL_STORE = 'naoshi_model'; // 空なら gemini-flash-latest（いつも新しい flash を指す名前）
@@ -12,6 +15,8 @@ const SYSTEM = `あなたは、LINEで送る文を、書いた人の代わりに
 決まり：
 - 返すのは、直した文だけ。前置き・説明・いくつもの案・かぎかっこで囲むことはしない
 - 書いた人の言いたいこと・口調・語尾のくせを残す。別人やキャラクターが書いたような文にしない
+- 元の文の言葉は、できるだけそのまま使う。言い換えるのは、直し方に要る所だけ
+- 話している物（天気・仕事・ごはんなど）を、別の物にたとえたり、別の言葉に置きかえたりしない
 - 元の文で言っていること（お願い・断り・予定・気持ち）は、1つも落とさない
 - 元の文に無い文（あいさつ・おわび・気づかいの一言・しめの言葉）を足さない
 - 「！」や絵文字は、合う所に少し足してよい（言葉そのものは変えすぎない）
@@ -20,7 +25,8 @@ const SYSTEM = `あなたは、LINEで送る文を、書いた人の代わりに
 
 // ボタンごとの頼み方と、ぶれの大きさ（temperature）
 const MODES = {
-  funny: { text: '面白く：文の流れはそのままで、言い回しを1か所だけ、クスッとする言い方に変える。大げさなたとえ・ネタ・ゲームやアニメの言葉は使わない', temperature: 0.7 },
+  // 2026-11-25「今日天気いいね」→「今日の太陽、やる気出しすぎじゃない？」になり、変わりすぎと言われた。語尾と！・絵文字でノリを出す
+  funny: { text: '面白く：元の文の言葉は、ほぼそのまま使う。変えるのは語尾か1語だけで、ノリのいい言い方にする。「！」や絵文字を足してよい。たとえ話・ネタ・言いかえはしない', temperature: 0.5 },
   polite: { text: 'ていねい：敬語に直すだけ。目上の人に送れる、ふつうのです・ます調にする。かたすぎる敬語や二重敬語は使わない。絵文字は足さない', temperature: 0.3 },
   soft: { text: 'やわらかく：言い切り・命令・断りの所の言い方だけを、角が立たない形に変える。ほかの所はそのまま', temperature: 0.4 },
   short: { text: '短く：言いたいことだけを残して短くする。口調は変えない', temperature: 0.3 },
@@ -192,6 +198,8 @@ document.querySelector('.setting_save').addEventListener('click', () => {
 
 // 起動したとき
 (function start() {
+  document.querySelector('.header_version').textContent = VERSION;
+
   // ほかのアプリの「共有」から来たときは、その文を入れる（URL の文はすぐ消す）
   const params = new URLSearchParams(location.search);
   const shared = [params.get('title'), params.get('text'), params.get('url')]

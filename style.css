@@ -56,6 +56,31 @@ textarea {
 }
 
 /* ┌─────────────────────────────────────────┐
+   │ 名前と版の番号                          │
+   └─────────────────────────────────────────┘ */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 1rem;
+}
+
+.header_title,
+.header_version {
+  margin: 0;
+}
+
+.header_title {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.header_version {
+  color: color-mix(in srgb, var(--ink) 60%, transparent);
+  font-size: 0.9375rem;
+}
+
+/* ┌─────────────────────────────────────────┐
    │ 打つ所                                  │
    └─────────────────────────────────────────┘ */
 /* 見出しと「消す」を左右に並べる */
