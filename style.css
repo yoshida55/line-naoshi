@@ -169,6 +169,33 @@ textarea {
 }
 
 /* 上の段に LINEで送る・共有で送る、下の段に コピー・もう一回（共有が無い端末は 3つが2段に並ぶ） */
+/* 3つの案（ver.12〜）。押した案が下の欄に入る */
+.result_choices {
+  display: grid;
+  gap: .5rem;
+  margin-bottom: .75rem;
+}
+
+.result_choices[hidden] {
+  display: none;
+}
+
+.result_choice {
+  min-height: 0;
+  padding: .75rem .9rem;
+  border-color: color-mix(in srgb, var(--ink) 25%, transparent);
+  font-size: 1.1rem;
+  line-height: 1.6;
+  text-align: left;
+  white-space: pre-wrap;
+}
+
+.result_choice.is_active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, white);
+  box-shadow: inset .3rem 0 0 var(--accent);
+}
+
 .result_inner {
   display: grid;
   grid-template-columns: 1fr 1fr;

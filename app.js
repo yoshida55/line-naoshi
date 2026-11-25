@@ -2,7 +2,7 @@
 // 鍵はこの端末の localStorage にだけ置く（外へは Gemini に送るときのヘッダーだけ）
 
 // 直して公開するたびに1つ上げる。画面の右上に出る
-const VERSION = 'ver.11（11月25日）';
+const VERSION = 'ver.12（11月25日）';
 
 const KEY_STORE = 'naoshi_api_key';
 const DRAFT_STORE = 'naoshi_draft'; // ver.3 まで打ちかけの文を残していた所。今は起動のたびに消すだけ
@@ -25,6 +25,13 @@ const SYSTEM = `あなたは、LINEで送る文を、書いた人の代わりに
 - 長さは元の文と同じくらい。改行も元の文に合わせる`;
 
 // ボタンごとの頼み方と、ぶれの大きさ（temperature）
+// 3案を並べるときの決まり（ver.12〜）。1行めの「返すのは直した文だけ」だけを差しかえ、ほかの決まりはそのまま
+const SYSTEM_CHOICES = SYSTEM.replace(
+  /^- 返すのは、直した文だけ。.*$/m,
+  '- 直した文の案を3つ、文字列の配列（JSON）で返す。前置き・説明・番号・かぎかっこは付けない\n- 3つは、言い回しを少しずつ変える（同じ文を並べない）。どの案も、下の決まりを守る'
+);
+const CHOICE_COUNT = 3;
+
 const MODES = {
   // 2026-11-25「今日天気いいね」→「今日の太陽、やる気出しすぎじゃない？」になり、変わりすぎと言われた。語尾と！・絵文字でノリを出す
   funny: { text: '面白く：元の文の言葉は、ほぼそのまま使う。変えるのは語尾か1語だけで、ノリのいい言い方にする。「！」や絵文字を足してよい。たとえ話・ネタ・言いかえはしない', temperature: 0.5 },
@@ -37,11 +44,13 @@ const MODES = {
 const source = document.querySelector('#source_text');
 const result = document.querySelector('#result_text');
 const status = document.querySelector('.result_status');
+const choiceList = document.querySelector('.result_choices');
 const modeButtons = document.querySelectorAll('.mode_item');
 const setting = document.querySelector('.setting');
 const keyInput = document.querySelector('#api_key');
 
 let lastMode = null;
+let choices = []; // いま並んでいる案（ver.12〜）
 
 function setStatus(message, isError = false) {
   status.textContent = message;
@@ -62,37 +71,120 @@ function unwrap(text) {
   return t;
 }
 
-async function askGemini(key, prompt, temperature, system = SYSTEM) {
+// ① 電波が弱くても固まらないようにする（ver.12〜）
+// 15秒で打ち切り、つながらない・混んでいる（429・500・503）ときは、少し待って1回だけ自動でやり直す
+const TIMEOUT_MS = 15000;
+const RETRY_STATUS = [429, 500, 502, 503, 504];
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function callGemini(key, body) {
   const model = localStorage.getItem(MODEL_STORE) || 'gemini-flash-latest';
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   let res;
   try {
     res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, // 鍵は URL に入れない
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature,
-          thinkingConfig: { thinkingBudget: 0 }, // 考える時間を切る（オンだと待ちが長くなる）
-        },
-      }),
+      body: JSON.stringify(body),
+      signal: controller.signal,
     });
-  } catch {
-    throw new Error('ネットにつながりません。電波を確かめてください');
+  } catch (e) {
+    const err = new Error(e.name === 'AbortError'
+      ? '返事が来ません（15秒）。電波のよい所で、もう一度押してください'
+      : 'ネットにつながりません。電波を確かめてください');
+    err.retry = true;
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
 
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg = data.error?.message || '';
     if (/API key/i.test(msg) || res.status === 401 || res.status === 403) throw new Error('鍵が正しくないようです。下の設定を見てください');
-    if (res.status === 429) throw new Error('使える回数を超えました。少し待ってから、もう一度押してください');
-    throw new Error(`Gemini がエラーを返しました（${res.status}）${msg ? '：' + msg.slice(0, 80) : ''}`);
+    const err = res.status === 429
+      ? new Error('使える回数を超えました。少し待ってから、もう一度押してください')
+      : new Error(`Gemini がエラーを返しました（${res.status}）${msg ? '：' + msg.slice(0, 80) : ''}`);
+    err.retry = RETRY_STATUS.includes(res.status);
+    err.status = res.status;
+    throw err;
   }
 
-  const text = (data.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-  if (!text.trim()) throw new Error('Gemini から文が返ってきませんでした。言い方を変えて、もう一度押してください');
-  return unwrap(text);
+  const cand = data.candidates?.[0];
+  const text = (cand?.content?.parts || []).map((p) => p.text || '').join('');
+  if (!text.trim()) {
+    // SAFETY＝Gemini が内容を理由に返事を止めた
+    if (cand?.finishReason === 'SAFETY' || data.promptFeedback?.blockReason) throw new Error('Gemini が、この文には答えられないと返しました。言い方を変えてみてください');
+    throw new Error('Gemini から文が返ってきませんでした。言い方を変えて、もう一度押してください');
+  }
+  return text;
+}
+
+// 1回目がだめでも、やり直せるものなら1回だけやり直す
+async function callWithRetry(key, body) {
+  try {
+    return await callGemini(key, body);
+  } catch (e) {
+    if (!e.retry) throw e;
+    setStatus('つながりにくいので、もう一度頼んでいます…');
+    await wait(e.status === 429 ? 3000 : 1500);
+    return await callGemini(key, body);
+  }
+}
+
+function makeBody(prompt, temperature, system, extra = {}) {
+  return {
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature,
+      thinkingConfig: { thinkingBudget: 0 }, // 考える時間を切る（オンだと待ちが長くなる）
+      ...extra,
+    },
+  };
+}
+
+async function askGemini(key, prompt, temperature, system = SYSTEM) {
+  return unwrap(await callWithRetry(key, makeBody(prompt, temperature, system)));
+}
+
+// ② 案を3つまとめて頼む（1回の問い合わせで3つ。3回頼むと、使える回数を3倍使うため）
+async function askChoices(key, prompt, temperature) {
+  const text = await callWithRetry(key, makeBody(prompt, temperature, SYSTEM_CHOICES, {
+    responseMimeType: 'application/json',
+    responseSchema: { type: 'ARRAY', items: { type: 'STRING' } },
+  }));
+  let list;
+  try {
+    list = JSON.parse(text);
+  } catch {
+    list = [text]; // 配列で返ってこなかったときは、1つの案として使う
+  }
+  if (!Array.isArray(list)) list = [String(list)];
+  const seen = new Set();
+  return list.map((t) => unwrap(String(t))).filter((t) => t && !seen.has(t) && seen.add(t)).slice(0, CHOICE_COUNT);
+}
+
+// 案を並べる。押した案が下の欄に入り、そこで手直しできる
+function showChoices(list) {
+  choices = list;
+  choiceList.replaceChildren();
+  choiceList.hidden = list.length < 2;
+  list.forEach((text, i) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'result_choice';
+    b.textContent = text;
+    b.addEventListener('click', () => pickChoice(i));
+    choiceList.append(b);
+  });
+  if (list.length) pickChoice(0);
+}
+
+function pickChoice(i) {
+  result.value = choices[i];
+  choiceList.querySelectorAll('.result_choice').forEach((b, j) => b.classList.toggle('is_active', i === j));
 }
 
 async function rewrite(mode, again = false) {
@@ -115,15 +207,20 @@ async function rewrite(mode, again = false) {
   source.blur(); // スマホのキーボードを閉じて、結果を見やすくする
 
   let prompt = `【直し方】${MODES[mode].text}\n【元の文】\n${text}`;
-  if (again && result.value.trim()) {
-    prompt += `\n【前に出した案（これとは違う言い回しにする）】\n${result.value.trim()}`;
+  const before = choices.length ? choices : [result.value.trim()].filter(Boolean);
+  if (again && before.length) {
+    prompt += `\n【前に出した案（これとは違う言い回しにする）】\n${before.join('\n---\n')}`;
   }
 
   setBusy(true);
   setStatus('Gemini に頼んでいます…');
   try {
-    result.value = await askGemini(key, prompt, MODES[mode].temperature);
-    setStatus('できました。手で少し直してから送ることもできます');
+    // 誤字だけは、直す所が決まっているので1案。ほかは3案を並べる
+    const list = mode === 'typo'
+      ? [await askGemini(key, prompt, MODES[mode].temperature)]
+      : await askChoices(key, prompt, MODES[mode].temperature);
+    showChoices(list);
+    setStatus(list.length > 1 ? 'できました。案を押して選べます。下の欄で手直しもできます' : 'できました。手で少し直してから送ることもできます');
     result.scrollIntoView({ block: 'center', behavior: 'smooth' });
   } catch (e) {
     setStatus(e.message, true);
@@ -194,6 +291,7 @@ function clearAll() {
   tidyOnEnd = false;
   source.value = '';
   result.value = '';
+  showChoices([]);
   modeButtons.forEach((b) => b.classList.remove('is_active'));
   lastMode = null;
   setStatus('');
